@@ -1,0 +1,21 @@
+[package]
+name = "Asp2InspBot"
+version = "0.1.0"
+authors = ["Josiah Gaskin <josiahgaskin@gmail.com>"]
+
+publish = false
+vcs = "None"
+
+[dependencies]
+rand = "*"
+text_io = "*"
+log = "0.3"
+fern = "0.3"
+
+[[bin]]
+path = "src/MyBot.rs"
+name = "MyBot"
+
+[[bin]]
+path = "src/RandomBot.rs"
+name = "RandomBot"
