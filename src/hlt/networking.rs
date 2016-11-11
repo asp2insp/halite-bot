@@ -78,7 +78,9 @@ fn send_string(s: String) -> () {
 }
 
 fn get_string() -> String {
-    read!("{}\n")
+    let mut buf = String::new();
+    io::stdin().read_line(&mut buf).unwrap();
+    buf.trim().to_owned()
 }
 
 pub fn get_init() -> (u8, types::GameMap) {

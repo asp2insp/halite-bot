@@ -1,18 +1,8 @@
-#![allow(non_snake_case)]
-#![allow(warnings)]
-
-#[macro_use] extern crate text_io;
-
-//Notice: due to Rust's extreme dislike of (even private!) global mutables, we do not reset the production values of each tile during get_frame.
-//If you change them, you may not be able to recover the actual production values of the map, so we recommend not editing them.
-//However, if your code calls for it, you're welcome to edit the production values of the sites of the map - just do so at your own risk.
-
 mod hlt;
 use hlt::{ networking, types };
-use std::collections::{HashMap, VecDeque, HashSet};
+use std::collections::HashMap;
 
 struct MoveFeatures {
-    loc: types::Location,
     d: u8,
     distance: i32,
     friendly: bool,
@@ -28,7 +18,6 @@ fn get_best_move(loc: types::Location, map: &types::GameMap, my_id: u8) -> u8 {
         let proposed = map.get_site_ref(loc, *d);
         let current = map.get_site_ref(loc, types::STILL);
         moves.push(MoveFeatures {
-            loc: loc.clone(),
             d: *d,
             distance: distance_to_border(loc, *d, &map, my_id),
             friendly: proposed.owner == my_id,
@@ -38,7 +27,6 @@ fn get_best_move(loc: types::Location, map: &types::GameMap, my_id: u8) -> u8 {
             production_them: proposed.production as i32,
         });
     }
-    let current_production = moves[0].production_us as i32;
     let mut moves: Vec<(u8, i32)> = moves.iter()
         .map(|mf| (mf.d, score_move(mf)))
         .collect();
@@ -48,7 +36,7 @@ fn get_best_move(loc: types::Location, map: &types::GameMap, my_id: u8) -> u8 {
 }
 
 fn score_still(loc: types::Location, map: &types::GameMap) -> i32 {
-    500
+    750
 }
 
 fn score_move(mf: &MoveFeatures) -> i32 {
@@ -58,24 +46,17 @@ fn score_move(mf: &MoveFeatures) -> i32 {
         // Penalize distance
         - mf.distance * mf.distance * 1
         // Penalize losing battles
-        - if mf.friendly {0} else { mf.strength_them - mf.strength_us } * 1
+        - if mf.friendly {0} else { mf.strength_them - mf.strength_us } * 8
         // Super penalize losing due to strength cap
         - if mf.friendly && combined_strength > 255 {
                 combined_strength - 255
             } else {
                 0
             } * 5
-        // Reward combining friendly in NW directions
-        + if mf.friendly && mf.strength_us + mf.strength_them < 255
-            && (mf.d == types::NORTH || mf.d == types::WEST) {
-            mf.strength_them + mf.strength_us
-        } else {
-            0
-        } * 0
         // Reward gaining territory
-        + if !mf.friendly && mf.strength_us > mf.strength_them { mf.production_them } else {0} * 10
+        + if !mf.friendly && mf.strength_us > mf.strength_them { 100 } else {0} * 10
         // Reward moving to higher production
-        + if mf.friendly && mf.production_us < mf.production_them {
+        + if mf.production_us < mf.production_them {
                 mf.production_them - mf.production_us
             } else {0} * 2
     )
@@ -108,12 +89,14 @@ fn main() {
                 let site = game_map.get_site_ref(l, types::STILL);
                 let threshold = 5 * site.production;
                 match (site.owner, site.strength) {
-                    (my_id, strength) if strength < threshold => {
+                    (id, strength) if strength < threshold && my_id == id => {
                         moves.insert(l, types::STILL);
                     },
-                    (my_id, _) => {
-                        moves.insert(l, get_best_move(l, &game_map, my_id));
+                    (id, _) if my_id == id => {
+                        let d = get_best_move(l, &game_map, my_id);
+                        moves.insert(l, d);
                     },
+                    (_, _) => {},
                 };
             }
         }
