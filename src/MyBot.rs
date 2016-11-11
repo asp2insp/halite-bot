@@ -1,7 +1,5 @@
 #![allow(non_snake_case)]
 #![allow(warnings)]
-#[macro_use] extern crate log;
-extern crate fern;
 
 #[macro_use] extern crate text_io;
 
@@ -13,51 +11,92 @@ mod hlt;
 use hlt::{ networking, types };
 use std::collections::{HashMap, VecDeque, HashSet};
 
-fn find_nearest_border(loc: types::Location, map: &types::GameMap, my_id: u8) -> u8 {
-    // Breadth-first search to try and locate the nearest border
-    let mut queue = VecDeque::new();
-    for d in &types::CARDINALS {
-        queue.push_back((loc, *d));
-    }
-    while let Some((l, d)) = queue.pop_front() {
-        if map.get_site_ref(l, types::STILL).owner != my_id {
-            return d
-        } else {
-            let next = map.get_location(l, d);
-            if next != loc { // Don't loop around
-                queue.push_back((next, d));
-            }
-        }
-    }
-    // Default direction
-    types::NORTH
+struct MoveFeatures {
+    loc: types::Location,
+    d: u8,
+    distance: i32,
+    friendly: bool,
+    strength_us: i32,
+    strength_them: i32,
+    production_them: i32,
+    production_us: i32,
 }
 
-fn angle_to_direction(angle: f64) -> u8 {
-    let pi: f64 = std::f64::consts::PI;
-    let a = angle * 4f64/pi;
-    if angle <= 1f64 || a > 7f64 {
-        types::EAST
-    } else if angle <= 3f64 {
-        types::NORTH
-    } else if angle <= 5f64 {
-        types::WEST
-    } else {
-        types::SOUTH
+fn get_best_move(loc: types::Location, map: &types::GameMap, my_id: u8) -> u8 {
+    let mut moves = vec![];
+    for d in &types::CARDINALS {
+        let proposed = map.get_site_ref(loc, *d);
+        let current = map.get_site_ref(loc, types::STILL);
+        moves.push(MoveFeatures {
+            loc: loc.clone(),
+            d: *d,
+            distance: distance_to_border(loc, *d, &map, my_id),
+            friendly: proposed.owner == my_id,
+            strength_us: current.strength as i32,
+            strength_them: proposed.strength as i32,
+            production_us: current.production as i32,
+            production_them: proposed.production as i32,
+        });
+    }
+    let current_production = moves[0].production_us as i32;
+    let mut moves: Vec<(u8, i32)> = moves.iter()
+        .map(|mf| (mf.d, score_move(mf)))
+        .collect();
+    moves.push((types::STILL, score_still(loc, &map)));
+    moves.sort_by(|a, b| b.1.cmp(&a.1));
+    moves[0].0
+}
+
+fn score_still(loc: types::Location, map: &types::GameMap) -> i32 {
+    500
+}
+
+fn score_move(mf: &MoveFeatures) -> i32 {
+    let combined_strength = mf.strength_us + mf.strength_them;
+    (
+        1_000
+        // Penalize distance
+        - mf.distance * mf.distance * 1
+        // Penalize losing battles
+        - if mf.friendly {0} else { mf.strength_them - mf.strength_us } * 1
+        // Super penalize losing due to strength cap
+        - if mf.friendly && combined_strength > 255 {
+                combined_strength - 255
+            } else {
+                0
+            } * 5
+        // Reward combining friendly in NW directions
+        + if mf.friendly && mf.strength_us + mf.strength_them < 255
+            && (mf.d == types::NORTH || mf.d == types::WEST) {
+            mf.strength_them + mf.strength_us
+        } else {
+            0
+        } * 0
+        // Reward gaining territory
+        + if !mf.friendly && mf.strength_us > mf.strength_them { mf.production_them } else {0} * 10
+        // Reward moving to higher production
+        + if mf.friendly && mf.production_us < mf.production_them {
+                mf.production_them - mf.production_us
+            } else {0} * 2
+    )
+}
+
+fn distance_to_border(loc: types::Location, dir: u8, map: &types::GameMap, my_id: u8) -> i32 {
+    let mut l = loc.clone();
+    let mut counter = 0;
+    loop {
+        if map.get_site_ref(l, types::STILL).owner != my_id {
+            return counter
+        }
+        l = map.get_location(l, dir);
+        if l == loc {
+            return map.width as i32
+        }
+        counter += 1;
     }
 }
 
 fn main() {
-    let logger_config = fern::DispatchConfig {
-        format: Box::new(|msg: &str, level: &log::LogLevel, _location: &log::LogLocation| {
-            // This is a fairly simple format, though it's possible to do more complicated ones.
-            // This closure can contain any code, as long as it produces a String message.
-            format!("[{}] {}", level, msg)
-        }),
-        output: vec![fern::OutputConfig::file("output.log")],
-        level: log::LogLevelFilter::Debug,
-    };
-
     let (my_id, mut game_map) = networking::get_init();
     networking::send_init(format!("{}{}", "Asp2Insp".to_string(), my_id.to_string()));
     loop {
@@ -73,18 +112,8 @@ fn main() {
                         moves.insert(l, types::STILL);
                     },
                     (my_id, _) => {
-                        let direction = find_nearest_border(l, &game_map, my_id);
-                        let prop = game_map.get_site_ref(l, direction);
-                        let safe_own = prop.owner == my_id && prop.strength < 255 - site.strength;
-                        let safe_other = prop.owner != my_id && prop.strength < 2 * site.strength;
-                        let must_move = site.strength >= 230;
-                        if safe_own || safe_other || must_move {
-                            moves.insert(l, direction);
-                        } else {
-                            moves.insert(l, types::STILL);
-                        }
+                        moves.insert(l, get_best_move(l, &game_map, my_id));
                     },
-                    //(_, _) => {},
                 };
             }
         }
