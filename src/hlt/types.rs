@@ -40,6 +40,27 @@ impl GameMap {
         if dy > self.height as i16 / 2 { dy = self.height as i16 - dy; }
         (dx + dy) as u16
     }
+
+    pub fn get_direction(&self, l1: Location, l2: Location) -> u8 {
+        let mut dx = (l1.x as i16 - l2.x as i16).abs();
+        let mut dy = (l1.y as i16 - l2.y as i16).abs();
+        let mut xflip = false;
+        let mut yflip = false;
+        if dx > self.width as i16 / 2 {
+            dx = self.width as i16 - dx;
+            xflip = true;
+        }
+        if dy > self.height as i16 / 2 {
+            dy = self.height as i16 - dy;
+            yflip = true;
+        }
+        if dx < dy {
+            if xflip { WEST } else { EAST }
+        } else {
+            if yflip { NORTH } else { SOUTH }
+        }
+    }
+
     pub fn get_angle(&self, l1: Location, l2: Location) -> f64 {
         let mut dx = l2.x as i16- l1.x as i16;
         let mut dy = l2.y as i16 - l1.y as i16;

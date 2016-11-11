@@ -7,7 +7,7 @@ publish = false
 vcs = "None"
 
 [dependencies]
-text_io = "*"
+
 
 [[bin]]
 path = "src/MyBot.rs"
