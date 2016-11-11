@@ -36,7 +36,8 @@ fn get_best_move(loc: types::Location, map: &types::GameMap, my_id: u8) -> u8 {
 }
 
 fn score_still(loc: types::Location, map: &types::GameMap) -> i32 {
-    750
+    let current_strength = map.get_site_ref(loc, types::STILL).strength;
+    1000 - current_strength as i32
 }
 
 fn score_move(mf: &MoveFeatures) -> i32 {
@@ -44,10 +45,10 @@ fn score_move(mf: &MoveFeatures) -> i32 {
     (
         1_000
         // Penalize distance
-        - mf.distance * mf.distance * 1
+        - mf.distance * 5
         // Penalize losing battles
         - if mf.friendly {0} else { mf.strength_them - mf.strength_us } * 8
-        // Super penalize losing due to strength cap
+        // Penalize losing due to strength cap
         - if mf.friendly && combined_strength > 255 {
                 combined_strength - 255
             } else {
@@ -58,7 +59,7 @@ fn score_move(mf: &MoveFeatures) -> i32 {
         // Reward moving to higher production
         + if mf.production_us < mf.production_them {
                 mf.production_them - mf.production_us
-            } else {0} * 2
+            } else {0} * 1
     )
 }
 
