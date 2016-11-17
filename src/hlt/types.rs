@@ -34,31 +34,18 @@ impl GameMap {
         l.x < self.width && l.y < self.height
     }
     pub fn get_distance(&self, l1: Location, l2: Location) -> u16 {
-        let mut dx = (l1.x as i16 - l2.x as i16).abs();
-        let mut dy = (l1.y as i16 - l2.y as i16).abs();
-        if dx > self.width as i16 / 2 { dx = self.width as i16 - dx; }
-        if dy > self.height as i16 / 2 { dy = self.height as i16 - dy; }
+        let mut dx = (l1.x as i32 - l2.x as i32).abs();
+        let mut dy = (l1.y as i32 - l2.y as i32).abs();
+        if dx > self.width as i32 / 2 { dx = self.width as i32 - dx; }
+        if dy > self.height as i32 / 2 { dy = self.height as i32 - dy; }
         (dx + dy) as u16
     }
 
     pub fn get_direction(&self, l1: Location, l2: Location) -> u8 {
-        let mut dx = (l1.x as i16 - l2.x as i16).abs();
-        let mut dy = (l1.y as i16 - l2.y as i16).abs();
-        let mut xflip = false;
-        let mut yflip = false;
-        if dx > self.width as i16 / 2 {
-            dx = self.width as i16 - dx;
-            xflip = true;
-        }
-        if dy > self.height as i16 / 2 {
-            dy = self.height as i16 - dy;
-            yflip = true;
-        }
-        if dx < dy {
-            if xflip { WEST } else { EAST }
-        } else {
-            if yflip { NORTH } else { SOUTH }
-        }
+        CARDINALS.iter()
+            .min_by_key(|d| self.get_distance(self.get_location(l1, **d), l2))
+            .unwrap()
+            .clone()
     }
 
     pub fn get_angle(&self, l1: Location, l2: Location) -> f64 {

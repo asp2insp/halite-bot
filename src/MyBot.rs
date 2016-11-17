@@ -223,18 +223,77 @@ fn reverse(d: &u8) -> u8 {
     }
 }
 
+fn find_poi(map: &types::GameMap, my_id: u8) -> Vec<types::Location> {
+    let mut result = Vec::new();
+    for a in 0..map.height {
+        for b in 0..map.width {
+            let l = types::Location { x: b, y: a };
+            let site = map.get_site_ref(l, types::STILL);
+            if site.production >= 5 && site.owner != my_id {
+                result.push(l);
+            }
+        }
+    }
+    result
+}
+
+fn find_closest_poi(l: types::Location, map: &types::GameMap, poi: &Vec<types::Location>) -> types::Location {
+    poi.iter()
+    .min_by_key(|p| map.get_distance(l, **p)).unwrap_or(&types::Location{x: 0, y: 0}).clone()
+}
+
+fn poi_strategy(my_id: u8, game_map: &types::GameMap) -> HashMap<types::Location, u8> {
+    let poi = find_poi(game_map, my_id);
+    let my_units = get_units_of_player(my_id, &game_map);
+    let unit_count = my_units.len();
+    let mut moves = HashMap::new();
+    let mut targets: HashMap<types::Location, ()> = HashMap::new();
+    for l in my_units {
+        let site = game_map.get_site_ref(l, types::STILL);
+        if site.strength < site.production * 5 {
+            moves.insert(l, types::STILL);
+        } else {
+            let closest = find_closest_poi(l, game_map, &poi);
+            let d = game_map.get_direction(l, closest);
+            let proposed_loc = game_map.get_location(l, d);
+            if site.strength > game_map.get_site_ref(proposed_loc, types::STILL).strength {
+                moves.insert(l, d);
+            }
+            targets.insert(closest, ());
+        }
+    }
+    //log(
+    //    format!("{} POI, {} units, {} distinct targets\n", poi.len(), unit_count, targets.len()),
+    //    my_id
+    //);
+    moves
+}
+
+use std::io::prelude::*;
+use std::fs::OpenOptions;
+fn log(s: String, id: u8) {
+    let mut file = OpenOptions::new()
+         .append(true)
+         .create(true)
+         .open(format!("output-{}.log", id))
+         .unwrap();
+    file.write(s.as_bytes()).unwrap();
+}
+
 fn main() {
     let (my_id, mut game_map) = networking::get_init();
     networking::send_init(format!("{}{}", "Asp2Insp".to_string(), my_id.to_string()));
     let mut turn_counter = 0;
     loop {
         networking::get_frame(&mut game_map);
-        let my_count = get_units_of_player(my_id, &game_map).len();
-        let moves = if my_count < 20 {
-            max_capture_strategy(my_id, &game_map)
-        } else {
-            local_best_strategy(my_id, &game_map)
-        };
+        let moves = poi_strategy(my_id, &game_map);
+
+        //let my_count = get_units_of_player(my_id, &game_map).len();
+        //let moves = if my_count < 20 {
+        //    max_capture_strategy(my_id, &game_map)
+        //} else {
+        //    local_best_strategy(my_id, &game_map)
+        //};
         networking::send_frame(moves);
         turn_counter += 1;
     }
