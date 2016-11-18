@@ -149,7 +149,6 @@ fn local_best_strategy(my_id: u8, game_map: &types::GameMap) -> HashMap<types::L
 }
 
 fn max_capture_strategy(my_id: u8, game_map: &types::GameMap) -> HashMap<types::Location, u8> {
-    // First identify the weakest target
     let my_units = get_units_of_player(my_id, &game_map);
     let mut possibilities = my_units
         .iter()
@@ -182,8 +181,9 @@ fn max_capture_strategy(my_id: u8, game_map: &types::GameMap) -> HashMap<types::
         .filter(|a| !a.friendly)
         .filter(|a| a.adjacent_strength_us + a.strength_us > a.strength_them)
         .collect::<Vec<_>>();
-    possibilities.sort_by(|a, b| a.strength_us.cmp(&b.strength_us));
     possibilities.sort_by(|a, b| b.strength_them.cmp(&a.strength_them));
+    possibilities.sort_by(|a, b| a.strength_us.cmp(&b.strength_us));
+    possibilities.sort_by(|a, b| a.production_them.cmp(&b.production_them));
 
     let mut moves = HashMap::new();
     while possibilities.len() > 0 {
@@ -286,14 +286,14 @@ fn main() {
     let mut turn_counter = 0;
     loop {
         networking::get_frame(&mut game_map);
-        let moves = poi_strategy(my_id, &game_map);
+        //let moves = poi_strategy(my_id, &game_map);
 
-        //let my_count = get_units_of_player(my_id, &game_map).len();
-        //let moves = if my_count < 20 {
-        //    max_capture_strategy(my_id, &game_map)
-        //} else {
-        //    local_best_strategy(my_id, &game_map)
-        //};
+        let my_count = get_units_of_player(my_id, &game_map).len();
+        let moves = if my_count < 20 {
+            max_capture_strategy(my_id, &game_map)
+        } else {
+            local_best_strategy(my_id, &game_map)
+        };
         networking::send_frame(moves);
         turn_counter += 1;
     }
