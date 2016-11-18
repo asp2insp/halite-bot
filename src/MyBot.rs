@@ -1,11 +1,12 @@
 #![allow(warnings)]
 
 mod hlt;
-use hlt::{ networking, types };
-use std::collections::HashMap;
+use hlt::networking;
+use hlt::types::*;
+use std::collections::{HashMap, HashSet};
 
 struct MoveFeatures {
-    loc: types::Location,
+    loc: Location,
     d: u8,
     owner_them: u8,
     distance: i32,
@@ -18,9 +19,9 @@ struct MoveFeatures {
     production_us: i32,
 }
 
-fn get_total_adjacent_strength(loc: types::Location, map: &types::GameMap, my_id: u8) -> i32 {
+fn get_total_adjacent_strength(loc: Location, map: &GameMap, my_id: u8) -> i32 {
     // Check to see if we can use multiple moves to capture
-    let total_adjacent_strength: i32 = types::CARDINALS.iter()
+    let total_adjacent_strength: i32 = CARDINALS.iter()
         .map(|d| {
             let site = map.get_site_ref(loc, *d);
             if site.owner == my_id { site.strength as i32 } else { 0 }
@@ -30,15 +31,15 @@ fn get_total_adjacent_strength(loc: types::Location, map: &types::GameMap, my_id
 }
 
 fn get_best_move_simple(
-    loc: types::Location,
-    map: &types::GameMap,
+    loc: Location,
+    map: &GameMap,
     my_id: u8,
-    current_moves: &HashMap<types::Location, i32>) -> Vec<(types::Location, u8)>  {
+    current_moves: &HashMap<Location, i32>) -> Vec<(Location, u8)>  {
     let mut moves = vec![];
-    for d in &types::CARDINALS {
+    for d in &CARDINALS {
         let proposed_loc = map.get_location(loc, *d);
         let proposed = map.get_site_ref(loc, *d);
-        let current = map.get_site_ref(loc, types::STILL);
+        let current = map.get_site_ref(loc, STILL);
         let already_assigned_strength: i32 = *current_moves.get(&proposed_loc)
             .unwrap_or(&0i32);
         moves.push(MoveFeatures {
@@ -72,7 +73,7 @@ fn get_best_move_simple(
         .filter(|a| a.strength_us + a.assigned_strength <= 260)
         .collect();
     match moves.len() {
-        0 => return vec![(loc, types::STILL)],
+        0 => return vec![(loc, STILL)],
         _ => {},
     };
     // If there's still more than one move available, go for production
@@ -87,7 +88,7 @@ fn get_best_move_simple(
         // We need to issue additional orders for other troups
         let mut r = vec![(m.loc, m.d)];
         let proposed = map.get_location(m.loc, m.d);
-        for adj in &types::CARDINALS {
+        for adj in &CARDINALS {
             let adj_loc = map.get_location(proposed, *adj);
             r.push((adj_loc, reverse(adj)));
         }
@@ -95,11 +96,11 @@ fn get_best_move_simple(
     }
 }
 
-fn distance_to_border(loc: types::Location, dir: u8, map: &types::GameMap, my_id: u8) -> i32 {
+fn distance_to_border(loc: Location, dir: u8, map: &GameMap, my_id: u8) -> i32 {
     let mut l = loc.clone();
     let mut counter = 0;
     loop {
-        if map.get_site_ref(l, types::STILL).owner != my_id {
+        if map.get_site_ref(l, STILL).owner != my_id {
             return counter
         }
         l = map.get_location(l, dir);
@@ -110,12 +111,12 @@ fn distance_to_border(loc: types::Location, dir: u8, map: &types::GameMap, my_id
     }
 }
 
-fn get_units_of_player(id: u8, map: &types::GameMap) -> Vec<types::Location> {
+fn get_units_of_player(id: u8, map: &GameMap) -> Vec<Location> {
     let mut result = Vec::new();
     for a in 0..map.height {
         for b in 0..map.width {
-            let l = types::Location { x: b, y: a };
-            let site = map.get_site_ref(l, types::STILL);
+            let l = Location { x: b, y: a };
+            let site = map.get_site_ref(l, STILL);
             if site.owner == id {
                 result.push(l);
             }
@@ -124,9 +125,9 @@ fn get_units_of_player(id: u8, map: &types::GameMap) -> Vec<types::Location> {
     result
 }
 
-fn local_best_strategy(my_id: u8, game_map: &types::GameMap) -> HashMap<types::Location, u8> {
+fn local_best_strategy(my_id: u8, game_map: &GameMap) -> HashMap<Location, u8> {
     let mut moves = HashMap::new();
-    let mut planned_moves: HashMap<types::Location, i32> = HashMap::new();
+    let mut planned_moves: HashMap<Location, i32> = HashMap::new();
     for l in get_units_of_player(my_id, game_map) {
         if moves.contains_key(&l) {
             continue;
@@ -134,7 +135,7 @@ fn local_best_strategy(my_id: u8, game_map: &types::GameMap) -> HashMap<types::L
 
         let next = get_best_move_simple(l, game_map, my_id, &planned_moves);
         for (loc, d) in next {
-            let site = game_map.get_site_ref(loc, types::STILL);
+            let site = game_map.get_site_ref(loc, STILL);
             let next_loc = game_map.get_location(loc, d);
 
             // Record the planned move
@@ -148,19 +149,19 @@ fn local_best_strategy(my_id: u8, game_map: &types::GameMap) -> HashMap<types::L
     moves
 }
 
-fn max_capture_strategy(my_id: u8, game_map: &types::GameMap) -> HashMap<types::Location, u8> {
+fn max_capture_strategy(my_id: u8, game_map: &GameMap) -> HashMap<Location, u8> {
     let my_units = get_units_of_player(my_id, &game_map);
     let mut possibilities = my_units
         .iter()
         .flat_map(|l| {
-            types::CARDINALS.iter()
+            CARDINALS.iter()
                 .cloned()
                 .map(move |d| (*l, d))
                 .collect::<Vec<_>>()
         })
         .map(|(l, d)| {
             let proposed = game_map.get_site_ref(l, d);
-            let current = game_map.get_site_ref(l, types::STILL);
+            let current = game_map.get_site_ref(l, STILL);
             MoveFeatures {
                 loc: l,
                 d: d,
@@ -196,18 +197,18 @@ fn max_capture_strategy(my_id: u8, game_map: &types::GameMap) -> HashMap<types::
             moves.insert(m.loc, m.d);
         } else {
             // Otherwise, move everything towards that point
-            for adj in &types::CARDINALS {
+            for adj in &CARDINALS {
                 let adj_loc = game_map.get_location(m.loc, *adj);
                 if !moves.contains_key(&adj_loc) {
                     moves.insert(adj_loc, reverse(adj));
                 }
             }
-            moves.insert(m.loc, types::STILL);
+            moves.insert(m.loc, STILL);
         }
     }
     for remaining in my_units {
         if !moves.contains_key(&remaining) {
-            moves.insert(remaining, types::STILL);
+            moves.insert(remaining, STILL);
         }
     }
     moves
@@ -215,20 +216,20 @@ fn max_capture_strategy(my_id: u8, game_map: &types::GameMap) -> HashMap<types::
 
 fn reverse(d: &u8) -> u8 {
     match d {
-        &types::NORTH => types::SOUTH,
-        &types::SOUTH => types::NORTH,
-        &types::WEST => types::EAST,
-        &types::EAST => types::WEST,
+        &NORTH => SOUTH,
+        &SOUTH => NORTH,
+        &WEST => EAST,
+        &EAST => WEST,
         _ => panic!("unknown direction {}", d),
     }
 }
 
-fn find_poi(map: &types::GameMap, my_id: u8) -> Vec<types::Location> {
+fn find_poi(map: &GameMap, my_id: u8) -> Vec<Location> {
     let mut result = Vec::new();
     for a in 0..map.height {
         for b in 0..map.width {
-            let l = types::Location { x: b, y: a };
-            let site = map.get_site_ref(l, types::STILL);
+            let l = Location { x: b, y: a };
+            let site = map.get_site_ref(l, STILL);
             if site.production >= 5 && site.owner != my_id {
                 result.push(l);
             }
@@ -237,26 +238,26 @@ fn find_poi(map: &types::GameMap, my_id: u8) -> Vec<types::Location> {
     result
 }
 
-fn find_closest_poi(l: types::Location, map: &types::GameMap, poi: &Vec<types::Location>) -> types::Location {
+fn find_closest_poi(l: Location, map: &GameMap, poi: &Vec<Location>) -> Location {
     poi.iter()
-    .min_by_key(|p| map.get_distance(l, **p)).unwrap_or(&types::Location{x: 0, y: 0}).clone()
+    .min_by_key(|p| map.get_distance(l, **p)).unwrap_or(&Location{x: 0, y: 0}).clone()
 }
 
-fn poi_strategy(my_id: u8, game_map: &types::GameMap) -> HashMap<types::Location, u8> {
+fn poi_strategy(my_id: u8, game_map: &GameMap) -> HashMap<Location, u8> {
     let poi = find_poi(game_map, my_id);
     let my_units = get_units_of_player(my_id, &game_map);
     let unit_count = my_units.len();
     let mut moves = HashMap::new();
-    let mut targets: HashMap<types::Location, ()> = HashMap::new();
+    let mut targets: HashMap<Location, ()> = HashMap::new();
     for l in my_units {
-        let site = game_map.get_site_ref(l, types::STILL);
+        let site = game_map.get_site_ref(l, STILL);
         if site.strength < site.production * 5 {
-            moves.insert(l, types::STILL);
+            moves.insert(l, STILL);
         } else {
             let closest = find_closest_poi(l, game_map, &poi);
             let d = game_map.get_direction(l, closest);
             let proposed_loc = game_map.get_location(l, d);
-            if site.strength > game_map.get_site_ref(proposed_loc, types::STILL).strength {
+            if site.strength > game_map.get_site_ref(proposed_loc, STILL).strength {
                 moves.insert(l, d);
             }
             targets.insert(closest, ());
@@ -278,6 +279,128 @@ fn log(s: String, id: u8) {
          .open(format!("output-{}.log", id))
          .unwrap();
     file.write(s.as_bytes()).unwrap();
+}
+
+#[derive(Copy, Clone)]
+enum Troop {
+    Weak(Location), // Gotta sit on production longer
+    Interior(Location), // Surrounded by at least 1 square of friendly
+    VerticalWall(Location), // A straight line along the enemy
+    HorizontalWall(Location), // A straight line along the enemy
+    Pincer(Location, Location), // Two troops that can corner against an enemy
+    Pincer3(Location, Location, Location), // Three troops that are almost surrounding an enemy
+    Lance(Location), // Surrounded on three sides by enemy
+    Island(Location), // Surrounded on all 8 sides by enemy
+    Reinforcement(Location), // Surrounded by friendly, but with a diagonal enemy
+    Unknown(Location),
+}
+
+fn classify(locs: Vec<Location>, map: &GameMap, my_id: u8) -> Vec<Troop> {
+    let mut done: HashSet<Location> = HashSet::new();
+    let mut result = Vec::new();
+    for l in locs {
+        if done.contains(&l) {
+            continue
+        }
+        let t = classify_loc(l, map, my_id);
+        use Troop::*;
+        match t {
+            Pincer(l1, l2) => {
+                done.insert(l1); done.insert(l2);
+            },
+            Pincer3(l1, l2, l3) => {
+                done.insert(l1); done.insert(l2); done.insert(l3);
+            },
+            _ => {
+                done.insert(l);
+            },
+        };
+        result.push(t);
+    }
+    result
+}
+
+fn classify_loc(loc: Location, map: &GameMap, my_id: u8) -> Troop {
+    use Troop::*;
+    let owner = |l| { map.get_site_ref(l, STILL).owner };
+    let strength = |l| { map.get_site_ref(l, STILL).strength };
+    let production = |l| { map.get_site_ref(l, STILL).production };
+    let get_location = |l, d1, d2| {
+        map.get_location(map.get_location(l, d1), d2)
+    };
+    let friendly = |l| { if map.get_site_ref(l, STILL).owner == my_id {1} else {0} };
+
+    if strength(loc) < production(loc) {
+        return Weak(loc)
+    }
+    // nw nn ne
+    // ww    ee
+    // sw ss se
+    let (nw, nn, ne) = (get_location(loc, WEST, NORTH), map.get_location(loc, NORTH), get_location(loc, EAST, NORTH));
+    let (ww, ee) = (map.get_location(loc, WEST), map.get_location(loc, EAST));
+    let (sw, ss, se) = (get_location(loc, WEST, SOUTH), map.get_location(loc, SOUTH), get_location(loc, EAST, SOUTH));
+
+    let surroundings = (friendly(nw), friendly(nn), friendly(ne),
+                       friendly(ww),               friendly(ee),
+                       friendly(sw), friendly(ss), friendly(se));
+    match surroundings {
+        (1, 1, 1,
+         1,    1,
+         1, 1, 1) => Interior(loc),
+        (_, 1, _,
+         1,    1,
+         _, 1, _) => Reinforcement(loc),
+        (_, 0, _,
+         0,    0,
+         _, 0, _) => Island(loc),
+        (_, a, _,
+         d,    b,
+         _, c, _) if a + b + c + d == 1 => Lance(loc),
+        (_, 1, _,
+         a,    b,
+         _, 1, _) if a + b < 2 => VerticalWall(loc),
+        (_, a, _,
+         1,    1,
+         _, b, _) if a + b < 2 => HorizontalWall(loc),
+        (1, 0, 1,
+         _,    _,
+         _, _, _) => Pincer3(nw, loc, ne),
+        (1, _, _,
+         0,    _,
+         1, _, _) => Pincer3(nw, loc, sw),
+        (_, _, 1,
+         _,    0,
+         _, _, 1) => Pincer3(ne, loc, se),
+        (_, _, _,
+         _,    _,
+         1, 0, 1) => Pincer3(sw, loc, se),
+
+        (1, 0, _,
+         _,    _,
+         _, _, _) => Pincer(nw, loc),
+        (_, _, _,
+         0,    _,
+         1, _, _) => Pincer(loc, sw),
+        (_, _, 1,
+         _,    0,
+         _, _, _) => Pincer(ne, loc),
+        (_, _, _,
+         _,    _,
+         1, 0, _) => Pincer(sw, loc),
+        (_, 0, 1,
+         _,    _,
+         _, _, _) => Pincer(loc, ne),
+        (1, _, _,
+         0,    _,
+         _, _, _) => Pincer(nw, loc),
+        (_, _, _,
+         _,    0,
+         _, _, 1) => Pincer(loc, se),
+        (_, _, _,
+         _,    _,
+         _, 0, 1) => Pincer(loc, se),
+        _ => Unknown(loc),
+    }
 }
 
 fn main() {
