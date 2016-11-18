@@ -33,15 +33,13 @@ fn get_total_adjacent_strength(loc: Location, map: &GameMap, my_id: u8) -> i32 {
 fn get_best_move_simple(
     loc: Location,
     map: &GameMap,
-    my_id: u8,
-    current_moves: &HashMap<Location, i32>) -> Vec<(Location, u8)>  {
+    my_id: u8) -> u8  {
     let mut moves = vec![];
     for d in &CARDINALS {
         let proposed_loc = map.get_location(loc, *d);
         let proposed = map.get_site_ref(loc, *d);
         let current = map.get_site_ref(loc, STILL);
-        let already_assigned_strength: i32 = *current_moves.get(&proposed_loc)
-            .unwrap_or(&0i32);
+        let already_assigned_strength: i32 = 0;
         moves.push(MoveFeatures {
             loc: loc,
             d: *d,
@@ -66,34 +64,22 @@ fn get_best_move_simple(
         // Only move towards the closest border
         .filter(|a| a.distance == shortest)
         // Don't allow losing battles
-        .filter(|a| a.adjacent_strength_us > (a.strength_them + a.production_them))
+        .filter(|a| a.strength_us > (a.strength_them + a.production_them))
         // Allow a small loss so full strength don't get stuck
         .filter(|a| !a.friendly || a.strength_us + a.strength_them <= 260)
         // Don't allow too many troops to move into the same space
         .filter(|a| a.strength_us + a.assigned_strength <= 260)
         .collect();
-    match moves.len() {
-        0 => return vec![(loc, STILL)],
-        _ => {},
-    };
+    if moves.len() == 0 {
+        return STILL
+    }
     // If there's still more than one move available, go for production
     moves.sort_by(|a, b| a.production_them.cmp(&b.production_them));
     // Prefer losing less strength
     moves.sort_by(|a, b| b.strength_them.cmp(&a.strength_them));
 
     let m = moves.pop().unwrap();
-    if m.strength_us > m.strength_them {
-        vec![(m.loc, m.d)]
-    } else {
-        // We need to issue additional orders for other troups
-        let mut r = vec![(m.loc, m.d)];
-        let proposed = map.get_location(m.loc, m.d);
-        for adj in &CARDINALS {
-            let adj_loc = map.get_location(proposed, *adj);
-            r.push((adj_loc, reverse(adj)));
-        }
-        r
-    }
+    m.d
 }
 
 fn distance_to_border(loc: Location, dir: u8, map: &GameMap, my_id: u8) -> i32 {
@@ -125,31 +111,7 @@ fn get_units_of_player(id: u8, map: &GameMap) -> Vec<Location> {
     result
 }
 
-fn local_best_strategy(my_id: u8, game_map: &GameMap) -> HashMap<Location, u8> {
-    let mut moves = HashMap::new();
-    let mut planned_moves: HashMap<Location, i32> = HashMap::new();
-    for l in get_units_of_player(my_id, game_map) {
-        if moves.contains_key(&l) {
-            continue;
-        }
-
-        let next = get_best_move_simple(l, game_map, my_id, &planned_moves);
-        for (loc, d) in next {
-            let site = game_map.get_site_ref(loc, STILL);
-            let next_loc = game_map.get_location(loc, d);
-
-            // Record the planned move
-            let strength = site.strength as i32;
-            *planned_moves.entry(loc).or_insert(strength) -= strength;
-            *planned_moves.entry(next_loc).or_insert(0) += strength;
-
-            moves.insert(loc, d);
-        }
-    }
-    moves
-}
-
-fn max_capture_strategy(my_id: u8, game_map: &GameMap) -> HashMap<Location, u8> {
+fn max_capture_strategy(game_map: &GameMap, my_id: u8) -> HashMap<Location, u8> {
     let my_units = get_units_of_player(my_id, &game_map);
     let mut possibilities = my_units
         .iter()
@@ -225,12 +187,22 @@ fn reverse(d: &u8) -> u8 {
 }
 
 fn find_poi(map: &GameMap, my_id: u8) -> Vec<Location> {
+    let mut total = 0f32;
+    for a in 0..map.height {
+        for b in 0..map.width {
+            let l = Location { x: b, y: a };
+            let site = map.get_site_ref(l, STILL);
+            total += site.production as f32;
+        }
+    }
+    let avg_production = total / (map.height as f32 * map.width as f32);
+    let avg_production = avg_production as u8;
     let mut result = Vec::new();
     for a in 0..map.height {
         for b in 0..map.width {
             let l = Location { x: b, y: a };
             let site = map.get_site_ref(l, STILL);
-            if site.production >= 5 && site.owner != my_id {
+            if site.production >= avg_production * 2 && site.owner != my_id {
                 result.push(l);
             }
         }
@@ -241,33 +213,6 @@ fn find_poi(map: &GameMap, my_id: u8) -> Vec<Location> {
 fn find_closest_poi(l: Location, map: &GameMap, poi: &Vec<Location>) -> Location {
     poi.iter()
     .min_by_key(|p| map.get_distance(l, **p)).unwrap_or(&Location{x: 0, y: 0}).clone()
-}
-
-fn poi_strategy(my_id: u8, game_map: &GameMap) -> HashMap<Location, u8> {
-    let poi = find_poi(game_map, my_id);
-    let my_units = get_units_of_player(my_id, &game_map);
-    let unit_count = my_units.len();
-    let mut moves = HashMap::new();
-    let mut targets: HashMap<Location, ()> = HashMap::new();
-    for l in my_units {
-        let site = game_map.get_site_ref(l, STILL);
-        if site.strength < site.production * 5 {
-            moves.insert(l, STILL);
-        } else {
-            let closest = find_closest_poi(l, game_map, &poi);
-            let d = game_map.get_direction(l, closest);
-            let proposed_loc = game_map.get_location(l, d);
-            if site.strength > game_map.get_site_ref(proposed_loc, STILL).strength {
-                moves.insert(l, d);
-            }
-            targets.insert(closest, ());
-        }
-    }
-    //log(
-    //    format!("{} POI, {} units, {} distinct targets\n", poi.len(), unit_count, targets.len()),
-    //    my_id
-    //);
-    moves
 }
 
 use std::io::prelude::*;
@@ -283,16 +228,163 @@ fn log(s: String, id: u8) {
 
 #[derive(Copy, Clone)]
 enum Troop {
-    Weak(Location), // Gotta sit on production longer
     Interior(Location), // Surrounded by at least 1 square of friendly
     VerticalWall(Location), // A straight line along the enemy
     HorizontalWall(Location), // A straight line along the enemy
-    Pincer(Location, Location), // Two troops that can corner against an enemy
-    Pincer3(Location, Location, Location), // Three troops that are almost surrounding an enemy
+    Pincer(Location, Location, Location), // Two troops that can corner against an enemy
+    Pincer3(Location, Location, Location, Location), // Three troops that are almost surrounding an enemy
     Lance(Location), // Surrounded on three sides by enemy
     Island(Location), // Surrounded on all 8 sides by enemy
     Reinforcement(Location), // Surrounded by friendly, but with a diagonal enemy
     Unknown(Location),
+}
+
+fn troop_strategy(map: &GameMap, my_id: u8) -> HashMap<Location, u8> {
+    use Troop::*;
+    let friendly = |l| { if map.get_site_ref(l, STILL).owner == my_id {1} else {0} };
+    let my_units = get_units_of_player(my_id, map);
+    let troops = classify(my_units, map, my_id);
+    let mut moves = HashMap::new();
+    let poi = find_poi(map, my_id);
+    let mut assigned_strength: HashMap<Location, usize> = HashMap::new();
+    let mut commit_move = |moves: &mut HashMap<Location, u8>, l, d| {
+        let proposed = map.get_site_ref(l, d);
+        let proposed_loc = map.get_location(l, d);
+        let strength = map.get_site_ref(l, STILL).strength;
+        if proposed.owner == my_id && strength as u16 + proposed.strength as u16 > 260u16 {
+            moves.insert(l, STILL);
+        } else if proposed.owner == my_id && strength as usize + *assigned_strength.entry(proposed_loc).or_insert(0) > 260 {
+            moves.insert(l, STILL);
+        } else {
+            *assigned_strength.entry(proposed_loc).or_insert(0) += strength as usize;
+            *assigned_strength.entry(l).or_insert(strength as usize) -= strength as usize;
+            moves.insert(l, d);
+        }
+    };
+    for t in troops {
+        match t {
+            Interior(l) => {
+                //moves.insert(l, get_best_move_simple(l, map, my_id));
+                let site = map.get_site_ref(l, STILL);
+                if site.strength < site.production * 5 {
+                    commit_move(&mut moves, l, STILL);
+                } else {
+                    let closest = find_closest_poi(l, map, &poi);
+                    let d = map.get_direction(l, closest);
+                    let proposed = map.get_site_ref(l, d);
+                    if site.strength as u16 + proposed.strength as u16 > 260u16  {
+                        commit_move(&mut moves, l, STILL);
+                    } else {
+                        commit_move(&mut moves, l, d);
+                    }
+                }
+            },
+            VerticalWall(l) => {
+                let site = map.get_site_ref(l, STILL);
+                let left = map.get_site_ref(l, WEST);
+                let right = map.get_site_ref(l, EAST);
+                if left.owner != my_id && site.strength > left.strength {
+                    commit_move(&mut moves, l, WEST);
+                } else if right.owner != my_id && site.strength > right.strength {
+                    commit_move(&mut moves, l, EAST);
+                } else if site.strength < site.production * 5 {
+                    commit_move(&mut moves, l, STILL);
+                } else {
+                    let up = map.get_site_ref(l, NORTH);
+                    let down = map.get_site_ref(l, SOUTH);
+                    if up.strength > site.strength {
+                        commit_move(&mut moves, l, NORTH);
+                    } else if down.strength > site.strength {
+                        commit_move(&mut moves, l, SOUTH);
+                    } else {
+                        commit_move(&mut moves, l, STILL);
+                    }
+                }
+            },
+            HorizontalWall(l) => {
+                let site = map.get_site_ref(l, STILL);
+                let up = map.get_site_ref(l, NORTH);
+                let down = map.get_site_ref(l, SOUTH);
+                if up.owner != my_id && site.strength > up.strength {
+                    commit_move(&mut moves, l, NORTH);
+                } else if down.owner != my_id && site.strength > down.strength {
+                    commit_move(&mut moves, l, SOUTH);
+                } else if site.strength < site.production * 5 {
+                    commit_move(&mut moves, l, STILL);
+                } else {
+                    let left = map.get_site_ref(l, WEST);
+                    let right = map.get_site_ref(l, EAST);
+                    if left.strength > site.strength {
+                        commit_move(&mut moves, l, WEST);
+                    } else if right.strength > site.strength {
+                        commit_move(&mut moves, l, EAST);
+                    } else {
+                        commit_move(&mut moves, l, STILL);
+                    }
+                }
+            },
+            Pincer(l1, l2, e) => {
+                let site1 = map.get_site_ref(l1, STILL);
+                let site2 = map.get_site_ref(l2, STILL);
+                let enemy = map.get_site_ref(e, STILL);
+                if site1.strength + site2.strength > enemy.strength {
+                    commit_move(&mut moves, l1, map.get_direction(l1, e));
+                    commit_move(&mut moves, l2, map.get_direction(l2, e));
+                } else {
+                    commit_move(&mut moves, l1, STILL);
+                    commit_move(&mut moves, l2, STILL);
+                }
+            },
+            Pincer3(l1, l2, l3, e) => {
+                let site1 = map.get_site_ref(l1, STILL);
+                let site2 = map.get_site_ref(l2, STILL);
+                let site3 = map.get_site_ref(l3, STILL);
+                let enemy = map.get_site_ref(e, STILL);
+                if site1.strength + site2.strength > enemy.strength {
+                    commit_move(&mut moves, l1, map.get_direction(l1, e));
+                    commit_move(&mut moves, l2, map.get_direction(l2, e));
+                } else if site3.strength + site2.strength > enemy.strength {
+                    commit_move(&mut moves, l3, map.get_direction(l3, e));
+                    commit_move(&mut moves, l2, map.get_direction(l2, e));
+                } else if site3.strength + site2.strength + site1.strength > enemy.strength {
+                    commit_move(&mut moves, l1, map.get_direction(l1, e));
+                    commit_move(&mut moves, l2, map.get_direction(l2, e));
+                    commit_move(&mut moves, l3, map.get_direction(l3, e));
+                } else {
+                    commit_move(&mut moves, l1, STILL);
+                    commit_move(&mut moves, l2, STILL);
+                    commit_move(&mut moves, l3, STILL);
+                }
+            },
+            Lance(l) => {
+                let site = map.get_site_ref(l, STILL);
+                for d in &CARDINALS {
+                    let enemy = map.get_site_ref(l, *d);
+                    if enemy.owner != my_id && site.strength > enemy.strength {
+                        commit_move(&mut moves, l, *d);
+                        break;
+                    }
+                }
+            },
+            Island(l) => {
+                let site = map.get_site_ref(l, STILL);
+                for d in &CARDINALS {
+                    let enemy = map.get_site_ref(l, *d);
+                    if site.strength > enemy.strength {
+                        commit_move(&mut moves, l, *d);
+                        break;
+                    }
+                }
+            },
+            Reinforcement(l) => {
+                commit_move(&mut moves, l, get_best_move_simple(l, map, my_id));
+            },
+            Unknown(l) => {
+                commit_move(&mut moves, l, get_best_move_simple(l, map, my_id));
+            },
+        }
+    }
+    moves
 }
 
 fn classify(locs: Vec<Location>, map: &GameMap, my_id: u8) -> Vec<Troop> {
@@ -305,10 +397,10 @@ fn classify(locs: Vec<Location>, map: &GameMap, my_id: u8) -> Vec<Troop> {
         let t = classify_loc(l, map, my_id);
         use Troop::*;
         match t {
-            Pincer(l1, l2) => {
+            Pincer(l1, l2, e) => {
                 done.insert(l1); done.insert(l2);
             },
-            Pincer3(l1, l2, l3) => {
+            Pincer3(l1, l2, l3, e) => {
                 done.insert(l1); done.insert(l2); done.insert(l3);
             },
             _ => {
@@ -330,9 +422,6 @@ fn classify_loc(loc: Location, map: &GameMap, my_id: u8) -> Troop {
     };
     let friendly = |l| { if map.get_site_ref(l, STILL).owner == my_id {1} else {0} };
 
-    if strength(loc) < production(loc) {
-        return Weak(loc)
-    }
     // nw nn ne
     // ww    ee
     // sw ss se
@@ -364,41 +453,41 @@ fn classify_loc(loc: Location, map: &GameMap, my_id: u8) -> Troop {
          _, b, _) if a + b < 2 => HorizontalWall(loc),
         (1, 0, 1,
          _,    _,
-         _, _, _) => Pincer3(nw, loc, ne),
+         _, _, _) => Pincer3(nw, loc, ne, nn),
         (1, _, _,
          0,    _,
-         1, _, _) => Pincer3(nw, loc, sw),
+         1, _, _) => Pincer3(nw, loc, sw, ww),
         (_, _, 1,
          _,    0,
-         _, _, 1) => Pincer3(ne, loc, se),
+         _, _, 1) => Pincer3(ne, loc, se, ee),
         (_, _, _,
          _,    _,
-         1, 0, 1) => Pincer3(sw, loc, se),
+         1, 0, 1) => Pincer3(sw, loc, se, ss),
 
         (1, 0, _,
          _,    _,
-         _, _, _) => Pincer(nw, loc),
+         _, _, _) => Pincer(nw, loc, nn),
         (_, _, _,
          0,    _,
-         1, _, _) => Pincer(loc, sw),
+         1, _, _) => Pincer(loc, sw, ww),
         (_, _, 1,
          _,    0,
-         _, _, _) => Pincer(ne, loc),
+         _, _, _) => Pincer(ne, loc, ee),
         (_, _, _,
          _,    _,
-         1, 0, _) => Pincer(sw, loc),
+         1, 0, _) => Pincer(sw, loc, ss),
         (_, 0, 1,
          _,    _,
-         _, _, _) => Pincer(loc, ne),
+         _, _, _) => Pincer(loc, ne, nn),
         (1, _, _,
          0,    _,
-         _, _, _) => Pincer(nw, loc),
+         _, _, _) => Pincer(nw, loc, ww),
         (_, _, _,
          _,    0,
-         _, _, 1) => Pincer(loc, se),
+         _, _, 1) => Pincer(loc, se, ee),
         (_, _, _,
          _,    _,
-         _, 0, 1) => Pincer(loc, se),
+         _, 0, 1) => Pincer(loc, se, ss),
         _ => Unknown(loc),
     }
 }
@@ -413,9 +502,9 @@ fn main() {
 
         let my_count = get_units_of_player(my_id, &game_map).len();
         let moves = if my_count < 20 {
-            max_capture_strategy(my_id, &game_map)
+            max_capture_strategy(&game_map, my_id)
         } else {
-            local_best_strategy(my_id, &game_map)
+            troop_strategy(&game_map, my_id)
         };
         networking::send_frame(moves);
         turn_counter += 1;
