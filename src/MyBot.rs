@@ -1,5 +1,3 @@
-#![allow(warnings)]
-
 mod hlt;
 use hlt::networking;
 use hlt::types::*;
@@ -162,7 +160,7 @@ fn max_capture_strategy(game_map: &GameMap, my_id: u8) -> HashMap<Location, u8> 
             for adj in &CARDINALS {
                 let adj_loc = game_map.get_location(m.loc, *adj);
                 if !moves.contains_key(&adj_loc) {
-                    moves.insert(adj_loc, reverse(adj));
+                    moves.insert(adj_loc, reverse(*adj));
                 }
             }
             moves.insert(m.loc, STILL);
@@ -176,12 +174,12 @@ fn max_capture_strategy(game_map: &GameMap, my_id: u8) -> HashMap<Location, u8> 
     moves
 }
 
-fn reverse(d: &u8) -> u8 {
+fn reverse(d: u8) -> u8 {
     match d {
-        &NORTH => SOUTH,
-        &SOUTH => NORTH,
-        &WEST => EAST,
-        &EAST => WEST,
+        NORTH => SOUTH,
+        SOUTH => NORTH,
+        WEST => EAST,
+        EAST => WEST,
         _ => panic!("unknown direction {}", d),
     }
 }
@@ -236,12 +234,12 @@ enum Troop {
     Lance(Location), // Surrounded on three sides by enemy
     Island(Location), // Surrounded on all 8 sides by enemy
     Reinforcement(Location), // Surrounded by friendly, but with a diagonal enemy
+    Corner(Location, Location, Location), // Outside corner
     Unknown(Location),
 }
 
 fn troop_strategy(map: &GameMap, my_id: u8) -> HashMap<Location, u8> {
     use Troop::*;
-    let friendly = |l| { if map.get_site_ref(l, STILL).owner == my_id {1} else {0} };
     let my_units = get_units_of_player(my_id, map);
     let troops = classify(my_units, map, my_id);
     let mut moves = HashMap::new();
@@ -263,8 +261,7 @@ fn troop_strategy(map: &GameMap, my_id: u8) -> HashMap<Location, u8> {
     };
     for t in troops {
         match t {
-            Interior(l) => {
-                //moves.insert(l, get_best_move_simple(l, map, my_id));
+            Interior(l) | Reinforcement(l) => {
                 let site = map.get_site_ref(l, STILL);
                 if site.strength < site.production * 5 {
                     commit_move(&mut moves, l, STILL);
@@ -376,8 +373,36 @@ fn troop_strategy(map: &GameMap, my_id: u8) -> HashMap<Location, u8> {
                     }
                 }
             },
-            Reinforcement(l) => {
-                commit_move(&mut moves, l, get_best_move_simple(l, map, my_id));
+            Corner(l, c, r) => {
+                let sitel = map.get_site_ref(l, STILL);
+                let sitec = map.get_site_ref(c, STILL);
+                let siter = map.get_site_ref(r, STILL);
+                let e1 = reverse(map.get_direction(c, r));
+                let e2 = reverse(map.get_direction(c, l));
+                let enemy1 = map.get_site_ref(c, e1);
+                let enemy2 = map.get_site_ref(c, e2);
+
+                if sitec.strength > enemy1.strength {
+                    moves.insert(c, e1);
+                    moves.insert(r, map.get_direction(r, c));
+                    moves.insert(l, STILL);
+                } else if sitec.strength > enemy2.strength {
+                    moves.insert(c, e2);
+                    moves.insert(l, map.get_direction(l, c));
+                    moves.insert(r, STILL);
+                } else {
+                    moves.insert(c, STILL);
+                    if siter.strength > siter.production * 5 {
+                        moves.insert(r, map.get_direction(r, c));
+                    } else {
+                        moves.insert(r, STILL);
+                    }
+                    if sitel.strength > sitel.production * 5 {
+                        moves.insert(l, map.get_direction(l, c));
+                    } else {
+                        moves.insert(l, STILL);
+                    }
+                }
             },
             Unknown(l) => {
                 commit_move(&mut moves, l, get_best_move_simple(l, map, my_id));
@@ -397,10 +422,13 @@ fn classify(locs: Vec<Location>, map: &GameMap, my_id: u8) -> Vec<Troop> {
         let t = classify_loc(l, map, my_id);
         use Troop::*;
         match t {
-            Pincer(l1, l2, e) => {
+            Pincer(l1, l2, _) => {
                 done.insert(l1); done.insert(l2);
             },
-            Pincer3(l1, l2, l3, e) => {
+            Pincer3(l1, l2, l3, _) => {
+                done.insert(l1); done.insert(l2); done.insert(l3);
+            },
+            Corner(l1, l2, l3) => {
                 done.insert(l1); done.insert(l2); done.insert(l3);
             },
             _ => {
@@ -414,9 +442,6 @@ fn classify(locs: Vec<Location>, map: &GameMap, my_id: u8) -> Vec<Troop> {
 
 fn classify_loc(loc: Location, map: &GameMap, my_id: u8) -> Troop {
     use Troop::*;
-    let owner = |l| { map.get_site_ref(l, STILL).owner };
-    let strength = |l| { map.get_site_ref(l, STILL).strength };
-    let production = |l| { map.get_site_ref(l, STILL).production };
     let get_location = |l, d1, d2| {
         map.get_location(map.get_location(l, d1), d2)
     };
@@ -433,6 +458,9 @@ fn classify_loc(loc: Location, map: &GameMap, my_id: u8) -> Troop {
                        friendly(ww),               friendly(ee),
                        friendly(sw), friendly(ss), friendly(se));
     match surroundings {
+        (a, b, c,
+         d,    e,
+         f, g, h) if a > 1 || b > 1 || c > 1 || d > 1 || e > 1 || f > 1 || g > 1 || h > 1 => panic!("Bad Map"),
         (1, 1, 1,
          1,    1,
          1, 1, 1) => Interior(loc),
@@ -488,6 +516,19 @@ fn classify_loc(loc: Location, map: &GameMap, my_id: u8) -> Troop {
         (_, _, _,
          _,    _,
          _, 0, 1) => Pincer(loc, se, ss),
+
+        (_, 0, _,
+         0,    1,
+         _, 1, _) => Corner(ss, loc, ee),
+        (_, 0, _,
+         1,    0,
+         _, 1, _) => Corner(ww, loc, ss),
+        (_, 1, _,
+         0,    1,
+         _, 0, _) => Corner(nn, loc, ee),
+        (_, 1, _,
+         1,    0,
+         _, 0, _) => Corner(ww, loc, nn),
         _ => Unknown(loc),
     }
 }
@@ -495,18 +536,14 @@ fn classify_loc(loc: Location, map: &GameMap, my_id: u8) -> Troop {
 fn main() {
     let (my_id, mut game_map) = networking::get_init();
     networking::send_init(format!("{}{}", "Asp2Insp".to_string(), my_id.to_string()));
-    let mut turn_counter = 0;
     loop {
         networking::get_frame(&mut game_map);
-        //let moves = poi_strategy(my_id, &game_map);
-
         let my_count = get_units_of_player(my_id, &game_map).len();
-        let moves = if my_count < 20 {
+        let moves = if my_count < 10 {
             max_capture_strategy(&game_map, my_id)
         } else {
             troop_strategy(&game_map, my_id)
         };
         networking::send_frame(moves);
-        turn_counter += 1;
     }
 }
